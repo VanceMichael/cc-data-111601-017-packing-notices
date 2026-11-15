@@ -1,0 +1,30 @@
+{
+  "catalog": {
+    "entry": "/shipments/multi",
+    "messages": [
+      "/primary",
+      "/shipments/multi",
+      "/shipments/forward",
+      "/shipments/bad-count"
+    ],
+    "convention": "S-O-P-I or S-P-O-I"
+  },
+  "resources": {
+    "/primary": {
+      "file": "primary.bin",
+      "type": "application/octet-stream"
+    },
+    "/shipments/multi": {
+      "file": "resource-01.bin",
+      "type": "application/octet-stream"
+    },
+    "/shipments/forward": {
+      "file": "resource-02.bin",
+      "type": "application/octet-stream"
+    },
+    "/shipments/bad-count": {
+      "file": "resource-03.bin",
+      "type": "application/octet-stream"
+    }
+  }
+}

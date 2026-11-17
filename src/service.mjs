@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { Store } from './store.mjs';
 import { acquire } from './transport.mjs';
 import { inspect } from './reader.mjs';
+import { readShipments } from './shipment.mjs';
 
 export async function startService({ source, directory, port = 0 }) {
   const store = await new Store(directory).initialize();
@@ -12,6 +13,15 @@ export async function startService({ source, directory, port = 0 }) {
       const url = new URL(request.url, 'http://localhost');
       if (url.pathname === '/health') return response.end(JSON.stringify({ ready: true }));
       if (url.pathname === '/records' && request.method === 'GET') return response.end(JSON.stringify(await store.list()));
+      if (url.pathname === '/shipments' && request.method === 'GET') {
+        return response.end(JSON.stringify(await store.shipmentView()));
+      }
+      if (url.pathname.startsWith('/shipments/') && request.method === 'GET') {
+        const key = decodeURIComponent(url.pathname.slice('/shipments/'.length));
+        const shipment = await store.shipment(key);
+        if (!shipment) { response.writeHead(404); return response.end(JSON.stringify({ error: 'not_found' })); }
+        return response.end(JSON.stringify(shipment));
+      }
       if (url.pathname.startsWith('/objects/') && request.method === 'GET') {
         response.setHeader('Content-Type', 'application/octet-stream');
         return response.end(await store.object(url.pathname.slice(9)));
@@ -30,6 +40,43 @@ export async function startService({ source, directory, port = 0 }) {
         const record = await store.accept(result.bytes, new URL(payload.path, source).href, parsed);
         response.statusCode = 201;
         return response.end(JSON.stringify(record));
+      }
+      if (url.pathname === '/shipment-intakes' && request.method === 'POST') {
+        const chunks = []; let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > 16384) throw new Error('request_too_large');
+          chunks.push(chunk);
+        }
+        const payload = JSON.parse(Buffer.concat(chunks).toString());
+        if (typeof payload.path !== 'string') throw new Error('path_required');
+        const result = await acquire(source, payload.path);
+        const document = readShipments(result.bytes);
+        const record = await store.acceptShipmentDocument(result.bytes,
+          new URL(payload.path, source).href, document);
+        response.statusCode = document.status === 'rejected' ? 422 : 201;
+        return response.end(JSON.stringify({
+          receipt: record.id,
+          digest: record.digest,
+          status: document.status,
+          shipmentIntake: true,
+          transactions: document.transactions.map(item => ({
+            locator: item.locator,
+            status: item.status,
+            shipmentKey: item.shipment?.key ?? null,
+            packageCount: item.packages.length,
+            orderCount: item.orders.length,
+            issueCodes: item.issues.map(entry => entry.code),
+          })),
+          shipments: document.shipments.map(item => ({
+            key: item.key,
+            shipmentId: item.identity.id,
+            status: item.status,
+            packageCount: item.packages.length,
+            orderCount: item.orders.length,
+            issueCodes: [...new Set(item.issues.map(entry => entry.code))],
+          })),
+        }));
       }
       response.writeHead(404); response.end(JSON.stringify({ error: 'not_found' }));
     } catch (error) { response.statusCode = 422; response.end(JSON.stringify({ error: error.message })); }
